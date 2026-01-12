@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-shed-api
+  namespace: load-shed
+  labels:
+    app: load-shed-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: load-shed-api
+  template:
+    metadata:
+      labels:
+        app: load-shed-api
+    spec:
+      containers:
+        - name: api
+          image: load-shed-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "150m"
+              memory: "128Mi"
+            limits:
+              cpu: "600m"
+              memory: "256Mi"

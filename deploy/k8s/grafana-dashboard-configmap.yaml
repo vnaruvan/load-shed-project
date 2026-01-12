@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: load-shed-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  load-shed-dashboard.json: |-
+    {
+      "uid": "load-shed-api",
+      "title": "Load Shed API",
+      "tags": ["load-shed"],
+      "timezone": "browser",
+      "schemaVersion": 39,
+      "version": 1,
+      "refresh": "10s",
+      "time": { "from": "now-15m", "to": "now" },
+      "templating": {
+        "list": [
+          {
+            "name": "pod",
+            "type": "query",
+            "datasource": "Prometheus",
+            "query": "label_values(process_resident_memory_bytes, pod)",
+            "regex": "load-shed-api-.*",
+            "current": { "text": "load-shed-api", "value": "load-shed-api-.*" }
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "timeseries",
+          "title": "CPU usage (cores) per pod",
+          "datasource": "Prometheus",
+          "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (pod) (rate(process_cpu_seconds_total{pod=~\"$pod\"}[1m]))"
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "type": "timeseries",
+          "title": "Memory RSS (bytes) per pod",
+          "datasource": "Prometheus",
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "max by (pod) (process_resident_memory_bytes{pod=~\"$pod\"})"
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Request rate (best-effort)",
+          "datasource": "Prometheus",
+          "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate({pod=~\"$pod\",__name__=~\"http_requests_total|http_server_requests_total|requests_total|load_shed_requests_total|load_shed_work_requests_total\"}[1m]))"
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "p95 latency seconds (best-effort)",
+          "datasource": "Prometheus",
+          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate({pod=~\"$pod\",__name__=~\"http_request_duration_seconds_bucket|http_server_request_duration_seconds_bucket|request_duration_seconds_bucket|load_shed_request_duration_seconds_bucket\"}[5m])))"
+            }
+          ]
+        }
+      ]
+    }

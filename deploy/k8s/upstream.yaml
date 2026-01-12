@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-shed-upstream
+  namespace: load-shed
+  labels:
+    app: load-shed-upstream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: load-shed-upstream
+  template:
+    metadata:
+      labels:
+        app: load-shed-upstream
+    spec:
+      containers:
+      - name: upstream
+        image: hashicorp/http-echo:1.0
+        args:
+          - "-listen=:8080"
+          - "-text=ok"
+        ports:
+          - name: http
+            containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-shed-upstream
+  namespace: load-shed
+spec:
+  selector:
+    app: load-shed-upstream
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

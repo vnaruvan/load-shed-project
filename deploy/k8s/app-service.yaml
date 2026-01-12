@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-shed-api
+  namespace: load-shed
+  labels:
+    app: load-shed-api
+spec:
+  selector:
+    app: load-shed-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

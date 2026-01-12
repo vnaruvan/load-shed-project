@@ -1,0 +1,18 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: load-shed-api
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app: load-shed-api
+  namespaceSelector:
+    matchNames:
+      - load-shed
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
