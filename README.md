@@ -1,21 +1,48 @@
 # Load Shed API
 
-A Kubernetes-deployed demonstration API showcasing production-grade reliability patterns: **timeouts**, **circuit breakers**, **load shedding**, **autoscaling**, and **observability** around an unreliable upstream dependency.
+A Kubernetes-deployed demonstration service showing how to keep APIs responsive when upstream dependencies become slow or unreliable using **timeouts**, **circuit breakers**, **load shedding**, and **observability**.
 
-**Stack:** FastAPI · Prometheus · Grafana · kube-prometheus-stack · Kind · Terraform
+**Stack:** FastAPI · Docker · Kubernetes (Kind) · Prometheus · Grafana · kube-prometheus-stack · HPA
+
+---
+
+## 60-Second Overview
+
+| Aspect | Details |
+|--------|---------|
+| **What it is** | FastAPI service with `/client` endpoint that calls upstream using `httpx` with timeout |
+| **What it demonstrates** | Timeouts, circuit breaker, load shedding (429), HPA autoscaling, Prometheus metrics, Grafana dashboards |
+| **How to prove it works** | Run single in-cluster demo command, validate breaker state and metrics in Prometheus/Grafana |
 
 ---
 
 ## Quick Start
 
-**Prerequisites:** Docker, Kind, kubectl, Helm, Terraform ≥1.5
+**Prerequisites:** Docker, Kind, kubectl, Helm, Terraform ≥1.5 (optional)
 
 ```bash
 # 1. Create cluster
 kind create cluster --name load-shed
 
-# 2. Install monitoring
-cd infra/terraform && terraform init && terraform apply -auto-approve && cd ../..
+# 2. Install monitoring stack
+# Option A: Using Helm directly
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+kubectl apply -f deploy/k8s/namespace.yaml
+kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+
+helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  -n monitoring \
+  --set grafana.sidecar.dashboards.enabled=true \
+  --set grafana.sidecar.dashboards.label=grafana_dashboard \
+  --set grafana.defaultDashboardsEnabled=true
+
+# Option B: Using Terraform (optional)
+cd infra/terraform
+terraform init
+terraform apply -auto-approve
+cd ../..
 
 # 3. Build and load image
 docker build -t load-shed-api:local .
@@ -32,8 +59,12 @@ kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80 &
 ```
 
 **Grafana credentials:**
-- Username: `admin`
-- Password: `kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath="{.data.admin-password}" | base64 -d`
+```bash
+# Username: admin
+# Password:
+kubectl -n monitoring get secret kube-prometheus-stack-grafana \
+  -o jsonpath="{.data.admin-password}" | base64 -d; echo
+```
 
 ---
 
@@ -43,65 +74,56 @@ kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80 &
 
 | Component | Purpose |
 |-----------|---------|
-| **load-shed-api** | FastAPI service with reliability controls |
-| **load-shed-upstream** | Simulated dependency (configurable latency/failures) |
-| **Prometheus** | Metrics collection (kube-prometheus-stack) |
-| **Grafana** | Dashboard visualization |
-| **HPA + metrics-server** | Pod autoscaling based on CPU |
-| **Terraform** | Infrastructure provisioning |
-
-### Service Endpoints
-
-- **`/client`** - Main endpoint that calls upstream (demonstrates timeout, circuit breaker, load shedding)
-- **`/upstream`** - Simulated dependency with configurable behavior
-- **`/metrics`** - Prometheus metrics endpoint
-- **`/healthz`** - Liveness/readiness probe
+| **load-shed-api** | FastAPI service with reliability controls + metrics |
+| **Prometheus** | Scrapes `/metrics` via ServiceMonitor |
+| **Grafana** | Visualizes dashboards from ConfigMaps |
+| **metrics-server + HPA** | Autoscales load-shed-api based on CPU |
+| **kube-prometheus-stack** | Helm-deployed monitoring stack |
 
 ### Data Flow
 
 ```
-User/Load Generator
-        ↓
- load-shed-api (/client)
-        ↓
-   httpx + timeout
-        ↓
- load-shed-upstream (/upstream)
-        ↓
-   Prometheus scrapes /metrics
-        ↓
-   Grafana visualizes
+Load Generator
+    ↓
+load-shed-api Service (ClusterIP:80)
+    ↓
+FastAPI Pods
+  /client → httpx (timeout) → Upstream (UPSTREAM_BASE_URL/upstream)
+    ↓
+  /metrics → Prometheus → Grafana Dashboards
 ```
 
 ---
 
-## Reliability Patterns
+## Reliability Controls
 
-### 1. Timeouts
-**Mitigates:** Tail latency blowups, cascading failures, resource saturation
+### Timeout
+**Mitigates:** Tail latency blowups, cascading failures  
+**Signal:** `upstream_requests_total{result="timeout"}` increases, `/client` p95 rises
 
-Configured `httpx` timeout prevents hung requests from consuming workers indefinitely.
+### Circuit Breaker
+**Mitigates:** Cascading failures, wasted work on broken dependencies  
+**Signal:** `circuit_breaker_state=1`, `upstream_requests_total{result="breaker_open"}` increases
 
-**Observable signal:** `upstream_requests_total{result="timeout"}` increases, `/client` p95 latency rises
+### Load Shedding (429)
+**Mitigates:** Resource saturation, tail latency blowups  
+**Signal:** `http_requests_total{path="/client",status="429"}` increases
 
-### 2. Circuit Breaker
-**Mitigates:** Cascading failures, wasted work against failing dependencies
+### HPA (CPU-based)
+**Mitigates:** CPU saturation by adding replicas  
+**Signal:** `kubectl -n load-shed get hpa` shows scaling activity
 
-Opens after sustained upstream failures and short-circuits calls to fail fast.
+---
 
-**Observable signal:** `circuit_breaker_state=1`, `upstream_requests_total{result="breaker_open"}` increases
+## Failure Modes Explained
 
-### 3. Load Shedding (429)
-**Mitigates:** Resource saturation, tail latency blowups
-
-Rejects requests quickly when overloaded instead of queuing everything.
-
-**Observable signal:** `http_requests_total{path="/client",status="429"}` increases
-
-### 4. Horizontal Pod Autoscaling
-**Mitigates:** Resource saturation
-
-Automatically scales pods based on CPU utilization (requires metrics-server).
+| Failure Mode | Description |
+|--------------|-------------|
+| **Retry storms** | Retries during failures multiply traffic and overwhelm dependencies |
+| **Cascading failure** | Slow upstream ties up workers/sockets, degrading healthy endpoints |
+| **Tail latency blowups** | Under load, queuing dominates—p95/p99 spikes even when averages look fine |
+| **Resource saturation** | CPU/connection pools max out, throughput collapses, pods churn |
+| **Load shedding vs backpressure** | Shedding (429) rejects work quickly; backpressure slows producers. Shedding is safer when queuing would amplify tail latency |
 
 ---
 
@@ -111,32 +133,27 @@ Automatically scales pods based on CPU utilization (requires metrics-server).
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `http_requests_total` | Counter | HTTP requests by method, path, status |
-| `http_request_duration_seconds` | Histogram | Request latency distribution |
+| `http_requests_total` | Counter | Total HTTP requests (by method/path/status) |
+| `http_request_duration_seconds_bucket` | Histogram | Request latency distribution |
 | `upstream_requests_total` | Counter | Upstream outcomes (ok, error, timeout, breaker_open) |
-| `upstream_request_duration_seconds` | Histogram | Upstream latency distribution |
+| `upstream_request_duration_seconds_bucket` | Histogram | Upstream latency distribution |
 | `circuit_breaker_state` | Gauge | Breaker state (0=closed, 1=open) |
 
-### Dashboard Panels
+### Key Dashboard Panels
 
-**Request rate (overall):**
-```promql
-sum(rate(http_requests_total{job="load-shed-api",path="/client"}[$__rate_interval]))
-```
-
-**Request rate (per pod):**
+**Request rate per pod:**
 ```promql
 sum by (pod) (rate(http_requests_total{job="load-shed-api",path="/client"}[$__rate_interval]))
 ```
 
-**p95 latency:**
+**p95 latency per pod:**
 ```promql
-histogram_quantile(0.95, 
-  sum by (le) (rate(http_request_duration_seconds_bucket{job="load-shed-api",path="/client"}[$__rate_interval]))
+histogram_quantile(0.95,
+  sum by (pod, le) (rate(http_request_duration_seconds_bucket{job="load-shed-api",path="/client"}[$__rate_interval]))
 )
 ```
 
-**Circuit breaker state:**
+**Breaker state:**
 ```promql
 max(circuit_breaker_state{job="load-shed-api"})
 ```
@@ -151,168 +168,124 @@ sum by (result) (rate(upstream_requests_total{job="load-shed-api"}[$__rate_inter
 sum(rate(http_requests_total{job="load-shed-api",path="/client",status="429"}[$__rate_interval]))
 ```
 
+**Why these panels:**
+- **Request rate** - Confirms traffic and distribution across pods
+- **p95 latency** - Shows tail latency protection (or failure)
+- **Breaker state** - Proves open/close transitions work
+- **Upstream results** - Proves short-circuiting vs real upstream calls
+- **429 rate** - Proves shed behavior activates under saturation
+
 ---
 
-## Demo Walkthrough
+## Demo (Under 2 Minutes)
 
-### Option 1: Automated Demo Script
+### One-Command Demo
 
-Run the complete demo sequence automatically:
-
-```bash
-./scripts/demo_breaker.sh
-```
-
-This script runs baseline traffic, trips the circuit breaker, and demonstrates recovery.
-
-**Alternative - Target upstream directly:**
-```bash
-UPSTREAM_DEPLOY=load-shed-upstream ./scripts/demo_breaker.sh
-```
-
-This variant can be used to test the upstream service behavior in isolation.
-
-### Option 2: Manual Demo Steps
-
-Run these commands inside the cluster to generate realistic traffic patterns:
-
-#### Step 1: Baseline Traffic
+Run inside the cluster (no port-forward dependency):
 
 ```bash
 kubectl -n load-shed run demo --rm -it --restart=Never --image=curlimages/curl -- sh -c '
 SVC="http://load-shed-api/client";
-echo "Warmup - healthy traffic";
+
+echo "A) Baseline traffic";
 seq 1 200 | xargs -n1 -P10 sh -c "curl -sS -o /dev/null \"$0\" || true" "$SVC";
-echo "Done"
-'
-```
 
-**Expected:** HTTP 200s, request rate increases, traffic distributed across pods
-
-#### Step 2: Trip Circuit Breaker
-
-```bash
-kubectl -n load-shed run demo --rm -it --restart=Never --image=curlimages/curl -- sh -c '
-SVC="http://load-shed-api/client";
-echo "Forcing failures - tripping breaker";
+echo "B) Trip breaker (fail_rate=1.0)";
 seq 1 800 | xargs -n1 -P20 sh -c "curl -sS -o /dev/null \"$0?fail_rate=1.0\" || true" "$SVC";
+
+echo "C) Recovery (fail_rate=0.0)";
+seq 1 400 | xargs -n1 -P10 sh -c "curl -sS -o /dev/null \"$0?fail_rate=0.0\" || true" "$SVC";
+
 echo "Done"
 '
 ```
 
-**Expected:** Circuit breaker opens, `breaker_open` outcomes increase
+### Validate with Prometheus
 
-**Verify:**
+**Breaker state:**
 ```promql
-max(circuit_breaker_state{job="load-shed-api"})  # Should be 1
+max(circuit_breaker_state{job="load-shed-api"})
+```
+
+**Upstream totals by result:**
+```promql
+sum by (result) (upstream_requests_total{job="load-shed-api"})
+```
+
+**Upstream result rate:**
+```promql
 sum by (result) (rate(upstream_requests_total{job="load-shed-api"}[2m]))
 ```
 
-#### Step 3: Recovery
-
-```bash
-kubectl -n load-shed run demo --rm -it --restart=Never --image=curlimages/curl -- sh -c '
-SVC="http://load-shed-api/client";
-echo "Recovery - healthy traffic";
-seq 1 400 | xargs -n1 -P10 sh -c "curl -sS -o /dev/null \"$0?fail_rate=0.0\" || true" "$SVC";
-echo "Done"
-'
-```
-
-**Expected:** Circuit breaker closes, `circuit_breaker_state` returns to 0
-
----
-
-## Failure Modes Explained
-
-### Retry Storms
-Retries amplify traffic during incidents. Even if this service doesn't retry, upstream callers can multiply load exponentially.
-
-### Cascading Failures
-Slow or failing dependencies consume workers and connection pools. Latency climbs, timeouts increase, failures spread to healthy endpoints.
-
-### Tail Latency Blowups
-As utilization rises, queuing dominates. p95/p99 latency increases sharply even when average latency appears stable.
-
-### Resource Saturation
-CPU, memory, or connection pools hit limits. Throughput collapses, pods restart repeatedly, response codes degrade.
-
-### Load Shedding vs Backpressure
-- **Load shedding:** Rejects work quickly (429) to protect latency and stability
-- **Backpressure:** Slows producers or queues requests
-
-Shedding is protective when you cannot safely queue everything.
+**Expected behavior:**
+- **During trip phase:** Breaker goes to 1, `breaker_open` count increases
+- **During recovery:** Breaker returns to 0, `ok` results increase again
 
 ---
 
 ## Alerting
 
-A sample `PrometheusRule` is included at `deploy/k8s/prometheus-rule-load-shed.yaml`.
+Sample `PrometheusRule` included at `deploy/k8s/prometheus-rule-load-shed.yaml`
 
-**Example alert conditions:**
-- Circuit breaker open for sustained period
-- Upstream p95 latency above threshold
+**Alert conditions:**
+- Breaker open for sustained period
+- Upstream p95 above threshold
 - Elevated 5xx or 429 rates on `/client`
 
-These catch user-visible degradation and dependency failures before complete outage.
+**Rationale:** These are user-visible degradations that warrant immediate attention.
 
 ---
 
 ## Troubleshooting
 
-### Grafana dashboard not appearing
-**Symptom:** Dashboard missing in Grafana UI
+### Dashboard Missing in Grafana
 
-**Diagnosis:**
+**Check ConfigMap and labels:**
 ```bash
 kubectl -n monitoring get cm | grep -i dashboard
-kubectl -n monitoring logs deploy/kube-prometheus-stack-grafana --tail=200
+kubectl -n monitoring get cm load-shed-dashboard -o yaml | head
 ```
 
-**Fix:** Verify ConfigMap labels match Grafana's dashboard discovery configuration
+**Fix:** Verify ConfigMap has label matching Grafana sidecar config (`grafana_dashboard`)
 
-### Prometheus not scraping
-**Symptom:** No metrics in Prometheus targets
+### Prometheus Not Scraping
 
-**Diagnosis:**
+**Check ServiceMonitor:**
 ```bash
 kubectl -n load-shed get servicemonitor
 kubectl -n load-shed describe servicemonitor load-shed-api
 ```
 
-**Fix:** Ensure ServiceMonitor namespace and label selectors match
+**Fix:** Ensure label selectors and namespace match Prometheus configuration
 
-### HPA shows "no metrics returned"
-**Symptom:** HPA cannot scale pods
+### HPA Shows `<unknown>`
 
-**Diagnosis:**
+**Check metrics-server:**
 ```bash
-kubectl -n kube-system get pods | grep metrics-server
-kubectl get apiservices | grep metrics
+kubectl get apiservice v1beta1.metrics.k8s.io -o wide
+kubectl -n kube-system get pods -l k8s-app=metrics-server
 ```
 
-**Fix:** Install or restart metrics-server
+**Fix:** Install or restart metrics-server if unhealthy
 
-### Kind image not updating
-**Symptom:** Code changes not reflected in pods
+### Kind Image Not Updating
 
-**Fix:**
+**Reload image:**
 ```bash
 docker build -t load-shed-api:local .
 kind load docker-image load-shed-api:local --name load-shed
 kubectl -n load-shed rollout restart deploy/load-shed-api
 ```
 
-### Port-forward fails
-**Symptom:** Connection refused or address already in use
+### Port-Forward Fails
 
-**Diagnosis:**
+**Check port usage and endpoints:**
 ```bash
-ss -ltnp | grep -E '(:8080|:3000|:9090)'
+ss -ltnp | grep ':8080' || true
 kubectl -n load-shed get endpointslices -l kubernetes.io/service-name=load-shed-api -o wide
 ```
 
-**Fix:** Kill conflicting processes or verify service has endpoints
+**Fix:** Kill process using port or verify Service has healthy endpoints
 
 ---
 
@@ -325,17 +298,13 @@ kubectl -n load-shed get endpointslices -l kubernetes.io/service-name=load-shed-
 │   └── requirements.txt     # Python dependencies
 ├── deploy/
 │   └── k8s/
-│       ├── namespace.yaml
-│       ├── app-deployment.yaml
-│       ├── app-service.yaml
-│       ├── app-hpa.yaml
-│       ├── upstream.yaml
+│       ├── deployment.yaml
+│       ├── service.yaml
 │       ├── servicemonitor.yaml
 │       ├── grafana-dashboard-configmap.yaml
-│       └── prometheus-rule-load-shed.yaml
-├── infra/
-│   └── terraform/           # kube-prometheus-stack installation
-├── scripts/                 # Demo and load generators
-├── dashboards/              # Dashboard JSON sources
+│       ├── prometheus-rule-load-shed.yaml
+│       └── hpa.yaml
+├── scripts/                 # Helper demo scripts
+├── dashboards/              # Grafana JSON sources
 └── Dockerfile
 ```
