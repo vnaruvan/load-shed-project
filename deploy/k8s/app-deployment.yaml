@@ -6,19 +6,19 @@ metadata:
   labels:
     app: load-shed-api
 spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: load-shed-api
   template:
-    metadata:
-      labels:
-        app: load-shed-api
     spec:
       containers:
         - name: api
           image: load-shed-api:local
           imagePullPolicy: IfNotPresent
+
+          env:
+            - name: UPSTREAM_BASE_URL
+              value: "http://load-shed-upstream"
+            - name: MAX_INFLIGHT
+              value: "50"
+
           ports:
             - containerPort: 8080
               name: http
@@ -41,3 +41,4 @@ spec:
             limits:
               cpu: "600m"
               memory: "256Mi"
+
