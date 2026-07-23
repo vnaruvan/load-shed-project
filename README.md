@@ -1,4 +1,4 @@
-# Load Shed API
+# Cloud-Native Load-Shedding Platform - Load Shed API
 
 A Kubernetes demonstration API showing how services behave under unreliable dependencies using **timeouts**, **circuit breakers**, **load shedding (429)**, **HPA autoscaling**, and **Prometheus/Grafana observability**.
 
