@@ -12,7 +12,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
       - run: pip install -r requirements-dev.txt
-      - run: pytest -q
+      - run: python -m pytest -q
       - run: ruff check app tests load-tests/evidence.py
       - run: python -m compileall -q app tests load-tests/evidence.py
       - name: Validate JSON and YAML parsing
