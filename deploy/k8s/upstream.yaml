@@ -1,39 +1,29 @@
 apiVersion: apps/v1
 kind: Deployment
-metadata:
-  name: load-shed-upstream
-  namespace: load-shed
-  labels:
-    app: load-shed-upstream
+metadata: {name: load-shed-upstream, namespace: load-shed, labels: {app: load-shed-upstream}}
 spec:
   replicas: 1
-  selector:
-    matchLabels:
-      app: load-shed-upstream
+  selector: {matchLabels: {app: load-shed-upstream}}
   template:
-    metadata:
-      labels:
-        app: load-shed-upstream
+    metadata: {labels: {app: load-shed-upstream}}
     spec:
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
       containers:
-      - name: upstream
-        image: hashicorp/http-echo:1.0
-        args:
-          - "-listen=:8080"
-          - "-text=ok"
-        ports:
-          - name: http
-            containerPort: 8080
+        - name: upstream
+          image: load-shed-api:local
+          imagePullPolicy: Never
+          command: ["uvicorn", "app.upstream:app", "--host", "0.0.0.0", "--port", "8080"]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 2, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10, periodSeconds: 10}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: ["ALL"]}}
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 128Mi}
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: load-shed-upstream
-  namespace: load-shed
+metadata: {name: load-shed-upstream, namespace: load-shed}
 spec:
-  selector:
-    app: load-shed-upstream
-  ports:
-    - name: http
-      port: 80
-      targetPort: 8080
+  selector: {app: load-shed-upstream}
+  ports: [{name: http, port: 80, targetPort: http}]

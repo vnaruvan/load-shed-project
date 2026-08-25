@@ -1,55 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-CLUSTER="${CLUSTER:-load-shed}"
-NS_APP="${NS_APP:-load-shed}"
-NS_MON="${NS_MON:-monitoring}"
-RELEASE="${RELEASE:-kube-prometheus-stack}"
-
-need(){ command -v "$1" >/dev/null 2>&1 || { echo "missing: $1"; exit 1; }; }
-need kind; need kubectl; need helm; need docker
-
-if ! kind get clusters | grep -qx "$CLUSTER"; then
-  kind create cluster --name "$CLUSTER"
-fi
-
-kubectl get ns "$NS_APP" >/dev/null 2>&1 || kubectl create ns "$NS_APP"
-kubectl get ns "$NS_MON" >/dev/null 2>&1 || kubectl create ns "$NS_MON"
-
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
-helm repo update >/dev/null
-
-helm upgrade --install "$RELEASE" prometheus-community/kube-prometheus-stack \
-  -n "$NS_MON" \
-  --set grafana.defaultDashboardsEnabled=true \
-  --set grafana.sidecar.dashboards.enabled=true \
-  --set grafana.sidecar.dashboards.label=grafana_dashboard \
-  --set grafana.grafana\.ini.dashboards.default_home_dashboard_path=/tmp/dashboards/load-shed-dashboard.json >/dev/null
-
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; cd "$ROOT"
+CLUSTER="${CLUSTER:-load-shed}"; PF_DIR="$ROOT/.pf"; mkdir -p "$PF_DIR"
+need(){ command -v "$1" >/dev/null || { echo "missing prerequisite: $1" >&2; exit 1; }; }
+for command in docker kind kubectl terraform curl; do need "$command"; done
+kind get clusters | grep -qx "$CLUSTER" || kind create cluster --name "$CLUSTER"
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.2/components.yaml
+kubectl -n kube-system patch deployment metrics-server --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' || true
+kubectl -n kube-system rollout status deployment/metrics-server --timeout=180s
+terraform -chdir=infra/terraform init -reconfigure
+terraform -chdir=infra/terraform apply -auto-approve
 docker build -t load-shed-api:local .
 kind load docker-image load-shed-api:local --name "$CLUSTER"
-
-kubectl apply -f deploy/k8s/namespace.yaml >/dev/null
-kubectl apply -f deploy/k8s/app-deployment.yaml >/dev/null
-kubectl apply -f deploy/k8s/app-service.yaml >/dev/null
-kubectl apply -f deploy/k8s/upstream.yaml >/dev/null
-kubectl apply -f deploy/k8s/servicemonitor.yaml >/dev/null
-kubectl apply -f deploy/k8s/grafana-dashboard-configmap.yaml >/dev/null
-kubectl apply -f deploy/k8s/prometheus-rule-load-shed.yaml >/dev/null
-kubectl apply -f deploy/k8s/app-hpa.yaml >/dev/null
-
-kubectl -n "$NS_APP" rollout status deploy/load-shed-api --timeout=180s
-kubectl -n "$NS_MON" rollout status deploy/kube-prometheus-stack-grafana --timeout=180s
-kubectl -n "$NS_MON" rollout status deploy/kube-prometheus-stack-operator --timeout=180s
-
-echo "Grafana:    http://localhost:3000"
-echo "Prometheus: http://localhost:9090"
-echo "API:        http://localhost:8080"
-echo "Grafana password:"
-kubectl -n "$NS_MON" get secret kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
-
-kubectl -n "$NS_APP" port-forward svc/load-shed-api 8080:80 >/tmp/pf-api.log 2>&1 &
-kubectl -n "$NS_MON" port-forward svc/kube-prometheus-stack-grafana 3000:80 >/tmp/pf-grafana.log 2>&1 &
-kubectl -n "$NS_MON" port-forward svc/kube-prometheus-stack-prometheus 9090:9090 >/tmp/pf-prom.log 2>&1 &
-
-sleep 1
+kubectl apply -f deploy/k8s/namespace.yaml
+kubectl apply -f deploy/k8s/app-deployment.yaml -f deploy/k8s/app-service.yaml -f deploy/k8s/upstream.yaml -f deploy/k8s/app-hpa.yaml
+kubectl -n load-shed rollout status deployment/load-shed-upstream --timeout=180s
+kubectl -n load-shed rollout status deployment/load-shed-api --timeout=180s
+kubectl wait --for=condition=Established crd/servicemonitors.monitoring.coreos.com crd/prometheusrules.monitoring.coreos.com --timeout=180s
+kubectl apply -f deploy/k8s/servicemonitor.yaml -f deploy/k8s/prometheus-rule-load-shed.yaml
+kubectl -n monitoring create configmap load-shed-dashboard --from-file=load-shed-dashboard.json=dashboards/load-shed-dashboard.json --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n monitoring label configmap load-shed-dashboard grafana_dashboard=1 --overwrite
+kubectl get --raw /apis/metrics.k8s.io/v1beta1 >/dev/null; kubectl top pods -n load-shed
+kubectl -n load-shed get endpointslice -l kubernetes.io/service-name=load-shed-api
+for item in "api load-shed load-shed-api 8080:80" "grafana monitoring kube-prometheus-stack-grafana 3000:80" "prom monitoring kube-prometheus-stack-prometheus 9090:9090"; do
+  read -r name namespace service ports <<<"$item"
+  kubectl -n "$namespace" port-forward "svc/$service" "$ports" >"$PF_DIR/$name.log" 2>&1 & echo $! >"$PF_DIR/$name.pid"
+done
+for url in http://127.0.0.1:8080/healthz http://127.0.0.1:3000/api/health http://127.0.0.1:9090/-/ready; do
+  for _ in {1..30}; do curl -fsS "$url" >/dev/null && break; sleep 1; done; curl -fsS "$url" >/dev/null
+done
+kubectl -n load-shed get hpa load-shed-api
+echo "Ready: API :8080, Grafana :3000, Prometheus :9090"

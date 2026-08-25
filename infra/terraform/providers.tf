@@ -1,13 +1,16 @@
 terraform {
   required_version = ">= 1.5.0"
+  backend "local" {
+    path = ".state/terraform.tfstate"
+  }
   required_providers {
     helm = {
       source  = "hashicorp/helm"
-      version = ">= 2.12.1"
+      version = "3.1.1"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = ">= 2.25.2"
+      version = "3.0.1"
     }
   }
 }
