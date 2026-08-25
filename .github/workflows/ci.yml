@@ -1,0 +1,49 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - run: ruff check app tests load-tests/evidence.py
+      - run: python -m compileall -q app tests load-tests/evidence.py
+      - name: Validate JSON and YAML parsing
+        run: python -c "import json,pathlib,yaml; [json.load(open(p)) for p in pathlib.Path('dashboards').glob('*.json')]; [list(yaml.safe_load_all(open(p))) for p in pathlib.Path('deploy/k8s').glob('*.yaml')]"
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@2.0.0
+      - name: Kubernetes schema validation
+        run: |
+          curl -fsSLo /tmp/kubeconform.tar.gz https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp kubeconform
+          /tmp/kubeconform -strict -summary -ignore-missing-schemas deploy/k8s
+      - run: docker build -t load-shed-api:ci .
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform -chdir=infra/terraform fmt -check
+      - run: terraform -chdir=infra/terraform init -backend=false
+      - run: terraform -chdir=infra/terraform validate
+      - run: git diff --check
+
+  clean-kind:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Install Kind
+        run: |
+          curl -fsSLo /usr/local/bin/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64
+          chmod +x /usr/local/bin/kind
+      - run: ./scripts/start.sh
+      - run: curl -fsS http://127.0.0.1:8080/healthz
+      - run: kubectl -n load-shed get pods,hpa,endpointslice
+      - run: kubectl get --raw /apis/metrics.k8s.io/v1beta1
+      - run: ./scripts/stop.sh

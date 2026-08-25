@@ -11,7 +11,7 @@ resource "helm_release" "kube_prometheus_stack" {
   chart      = "kube-prometheus-stack"
   version    = "61.3.1"
 
- set = [
+  set = [
     {
       name  = "grafana.defaultDashboardsEnabled"
       value = "true"
@@ -23,6 +23,10 @@ resource "helm_release" "kube_prometheus_stack" {
     {
       name  = "grafana.sidecar.dashboards.label"
       value = "grafana_dashboard"
+    },
+    {
+      name  = "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues"
+      value = "false"
     }
   ]
 }

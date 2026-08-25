@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.test-cache/
+.ruff_cache/
+.venv/
+.terraform/
+*.tfstate
+*.tfstate.*
+infra/terraform/.state/
+.pf/
+load-tests/results/

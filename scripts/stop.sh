@@ -5,18 +5,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PF_DIR="$ROOT/.pf"
 
 kill_pidfile() {
-  local f="$1"
-  [[ -f "$f" ]] || return 0
+  local file="$1"
   local pid
-  pid="$(cat "$f" || true)"
-  if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
+  [[ -f "$file" ]] || return 0
+  pid="$(<"$file")"
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" >/dev/null 2>&1; then
     kill "$pid" >/dev/null 2>&1 || true
   fi
-  rm -f "$f"
+  rm -f "$file"
 }
 
 kill_pidfile "$PF_DIR/api.pid"
 kill_pidfile "$PF_DIR/grafana.pid"
 kill_pidfile "$PF_DIR/prom.pid"
-
-echo "stopped port-forwards"
+echo "stopped recorded port-forwards"
