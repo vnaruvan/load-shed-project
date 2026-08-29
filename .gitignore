@@ -10,3 +10,5 @@ __pycache__/
 infra/terraform/.state/
 .pf/
 load-tests/results/
+/load-shed-check
+/load-shed-check.exe

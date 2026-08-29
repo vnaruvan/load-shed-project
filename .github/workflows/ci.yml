@@ -11,10 +11,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.11"}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
       - run: ruff check app tests load-tests/evidence.py
       - run: python -m compileall -q app tests load-tests/evidence.py
+      - run: go test ./...
       - name: Validate JSON and YAML parsing
         run: python -c "import json,pathlib,yaml; [json.load(open(p)) for p in pathlib.Path('dashboards').glob('*.json')]; [list(yaml.safe_load_all(open(p))) for p in pathlib.Path('deploy/k8s').glob('*.yaml')]"
       - name: ShellCheck

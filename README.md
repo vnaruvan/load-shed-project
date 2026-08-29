@@ -100,6 +100,18 @@ terraform -chdir=infra/terraform validate
 docker build -t load-shed-api:local .
 ```
 
+### Go smoke checker
+
+`cmd/load-shed-check` is a standard-library-only operational check for the deployed API. It validates the bounded lab
+priority before sending traffic, verifies `/healthz`, classifies `/client` responses, and requires `Retry-After` on a
+shed response. It exits nonzero when the observed outcome differs from `--expect`.
+
+```bash
+go run ./cmd/load-shed-check --base-url http://127.0.0.1:8080 --priority normal --expect admitted
+go run ./cmd/load-shed-check --base-url http://127.0.0.1:8080 --priority low --expect shed
+go test ./...
+```
+
 See `load-tests/scenarios.md` for healthy, CPU/HPA, delayed admission, priority reservation, breaker, half-open recovery,
 and sustained maximum-replica scenarios. Store exact commit/tool versions, duration, rates, status counts, percentiles,
 replica/CPU timeline, and upstream outcomes; do not report expected values as measured results.
