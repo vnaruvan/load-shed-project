@@ -4,6 +4,8 @@ A Kubernetes-native FastAPI service that protects application availability under
 
 The service implements a hard per-process concurrency ceiling with reserved capacity for higher-priority traffic, rejects excess work before expensive processing begins, and exposes detailed Prometheus metrics for admission decisions, latency, dependency outcomes, circuit-breaker state, and Kubernetes scaling behavior.
 
+Deployed and verified on **Google Kubernetes Engine (GKE)** behind Cloud Load Balancing, with images in Artifact Registry, HPA scaling from **2 to 8 pods**, and Cloud Monitoring dashboards for latency and HTTP 429 rate. See the [deployment guide](docs/gke.md) and [screenshots and verification evidence](docs/deployment-proof.md).
+
 ## Architecture
 
 ```text
@@ -398,19 +400,3 @@ This project focuses on a practical reliability principle:
 > **When capacity is constrained, explicitly control which work enters the system instead of allowing overload to determine system behavior.**
 
 Autoscaling adds capacity over time. Admission control protects the service immediately. Circuit breaking prevents unhealthy dependencies from consuming resources repeatedly. Observability makes each decision measurable.
-
-## Google Kubernetes Engine
-
-For Artifact Registry, Cloud Load Balancing, Managed Prometheus and Cloud Monitoring,
-see [the GKE deployment guide](docs/gke.md). Deployment requires a billed Google Cloud
-project; these manifests alone do not establish a running deployment.
-
-## GKE deployment proof
-
-Deployed and verified on GKE Autopilot in `us-central1` on October 20, 2026,
-behind Google Cloud Load Balancing with the container image in Artifact Registry.
-The CPU HPA scaled from 2 to 4 to 8 replicas during the recorded load experiment.
-
-[View original Cloud Console screenshots and test evidence](docs/deployment-proof.md).
-The evidence includes admission rejection with `Retry-After`, dependency timeouts,
-circuit-breaker recovery, and Cloud Monitoring latency and 429-rate queries.
