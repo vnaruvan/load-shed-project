@@ -2,11 +2,15 @@
 
 A Kubernetes-native FastAPI service that protects application availability under overload and downstream dependency failures using **priority-aware admission control, circuit breaking, bounded HTTP timeouts, autoscaling, and observability**.
 
-The service implements a hard per-process concurrency ceiling with reserved capacity for higher-priority traffic, rejects excess work before expensive processing begins, and exposes detailed Prometheus metrics for admission decisions, latency, dependency outcomes, circuit-breaker state, and Kubernetes scaling behavior.
+The service implements a hard per-process concurrency ceiling with reserved capacity for higher-priority traffic, rejects excess work before expensive processing begins, and exposes detailed Prometheus metrics for admission decisions, latency, dependency outcomes, and circuit-breaker state. Kubernetes monitoring supplies HPA and resource metrics.
 
 Deployed and verified on **Google Kubernetes Engine (GKE)** behind Cloud Load Balancing, with images in Artifact Registry, HPA scaling from **2 to 8 pods**, and Cloud Monitoring dashboards for latency and HTTP 429 rate. See the [deployment guide](docs/gke.md) and [screenshots and verification evidence](docs/deployment-proof.md).
 
 ## Architecture
+
+Both local Kind and GCP deployments use the same FastAPI service and CPU-based HPA with 2–8 replicas. On GCP, Cloud Load Balancing routes traffic through GKE Ingress to the API Service; images are stored in Artifact Registry, and Managed Prometheus sends application metrics to Cloud Monitoring.
+
+### Local Kind architecture
 
 ```text
                          Kubernetes Service
@@ -131,7 +135,7 @@ An open breaker returns HTTP 503 without invoking the downstream dependency.
 
 The service creates one lifespan-managed `httpx.AsyncClient` instead of creating a new HTTP client for every request.
 
-Default connection settings:
+Client-level connection settings (before the per-request timeout override):
 
 | Setting                        | Value |
 | ------------------------------ | ----: |
@@ -142,7 +146,9 @@ Default connection settings:
 | Write timeout                  |   1 s |
 | Pool timeout                   | 0.1 s |
 
-This allows connection reuse while bounding how long requests may consume resources waiting for network operations or connection-pool capacity.
+The `/client` endpoint overrides all four timeout phases for each upstream call using the lab query parameter `timeout_ms`, which defaults to **200ms**. The connect/read/write/pool values above are client-level defaults; they are not the effective timeouts for `/client` calls. HTTPX phase timeouts bound individual network operations rather than imposing a single end-to-end request deadline.
+
+Connection pooling allows reuse while the effective timeouts bound waits for network operations and connection-pool capacity.
 
 Downstream failures are mapped intentionally:
 
@@ -194,9 +200,16 @@ The application exposes Prometheus metrics for:
 * circuit-breaker state
 * circuit-breaker transitions
 
-Prometheus discovers the API through a Kubernetes `ServiceMonitor`.
+The two deployment environments collect application metrics differently:
 
-Grafana is provisioned with dashboards covering:
+| Environment | Application metric collection | Visualization |
+| --- | --- | --- |
+| Local Kind | `ServiceMonitor` → Prometheus | Grafana |
+| GCP / GKE | `PodMonitoring` → Managed Service for Prometheus | Cloud Monitoring |
+
+The application exports the metrics listed above. Kubernetes monitoring provides the HPA replica counts and CPU/memory metrics.
+
+For local Kind, Grafana is provisioned with dashboards covering:
 
 * request and admission rates
 * shedding rate and shed fraction
@@ -209,7 +222,9 @@ Grafana is provisioned with dashboards covering:
 * CPU utilization
 * memory utilization
 
-Prometheus alert rules cover sustained breaker-open state, elevated downstream failures, high upstream latency, and sustained shedding.
+The local Prometheus alert rules cover sustained breaker-open state, elevated downstream failures, high upstream latency, and sustained shedding.
+
+The GKE Cloud Monitoring dashboard covers p95 application latency, HTTP 429 rate, 429 fraction, and admitted in-flight work. The GKE deployment does not install the local Grafana stack or its alert rules.
 
 ## Infrastructure
 
@@ -217,13 +232,14 @@ The project uses:
 
 * **FastAPI** for the API
 * **HTTPX** for asynchronous downstream calls
-* **Docker** for containerization
-* **Kubernetes / Kind** for orchestration
+* **Docker** for containerization and **Artifact Registry** for GCP images
+* **Cloud Load Balancing** with GKE Ingress for public traffic on GCP
+* **Kind** for local Kubernetes orchestration; **GKE Autopilot** for the GCP deployment
 * **Horizontal Pod Autoscaler** for CPU-based scaling
 * **Metrics Server** for Kubernetes resource metrics
-* **Prometheus** for metrics collection
-* **Grafana** for visualization
-* **Terraform** and **Helm** for monitoring infrastructure
+* **Prometheus** locally and **Managed Service for Prometheus** on GKE for application metrics
+* **Grafana** locally and **Cloud Monitoring** on GCP for visualization
+* **Terraform** and **Helm** for the local monitoring stack
 * **Pytest** for automated verification
 * **Ruff** for Python linting
 * **GitHub Actions** for CI
