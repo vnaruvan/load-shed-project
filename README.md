@@ -12,53 +12,138 @@ Both local Kind and GCP deployments use the same FastAPI service and CPU-based H
 
 ### Local Kind architecture
 
-```text
+LOCAL KIND DEPLOYMENT
+
                          Kubernetes Service
-                                |
-                                v
-                          load-shed-api
-                    +-------------------------+
-                    |      FastAPI Pod        |
-                    |                         |
-                    |  /work        /client   |
-                    |    |             |      |
-                    | Admission     Admission |
-                    |    |             |      |
-                    | CPU Work      Breaker   |
-                    |                  |      |
-                    |               HTTPX     |
-                    +------------------|------+
-                                       |
-                                       v
-                              Upstream Service
-                                       |
-                                       v
-                                 Upstream Pod
+                                 |
+                                 v
+                   FastAPI Pods: 2–8 replicas
+                  (managed by API Deployment)
+                                 |
+                                 v
+                    +---------------------------+
+                    |        FastAPI Pod        |
+                    |                           |
+                    |   /work         /client   |
+                    |     |               |     |
+                    | Admission       Admission |
+                    |     |               |     |
+                    | CPU Work     Circuit Breaker
+                    |                     |     |
+                    |                   HTTPX   |
+                    +---------------------|-----+
+                                          |
+                                          v
+                                  Upstream Service
+                                          |
+                                          v
+                                    Upstream Pod
 
 
-load-shed-api /metrics
-        |
-        v
-   ServiceMonitor
-        |
-        v
-    Prometheus
-        |
-        v
-      Grafana
+OBSERVABILITY
+
+                 API Pods: /metrics
+                          |
+                 ServiceMonitor
+                          |
+                     Prometheus
+                          |
+                       Grafana
+
+Kubernetes monitoring supplies HPA and resource metrics
+to Prometheus for the Grafana dashboards.
 
 
-Pod CPU
-   |
-   v
-Metrics Server
-   |
-   v
-Kubernetes HPA
-   |
-   v
-API Deployment: 2-8 replicas
-```
+AUTOSCALING
+
+                   API Pod CPU usage
+                          |
+                    Metrics Server
+                          |
+                    Kubernetes HPA
+                          |
+                Adjusts API Deployment
+                     2–8 replicas
+
+
+GCP / GKE DEPLOYMENT
+
+                         Internet Clients
+                                 |
+                                 v
+                       Cloud Load Balancing
+                                 |
+                    Routes configured by
+                           GKE Ingress
+                                 |
+                                 v
+                         Kubernetes Service
+                                 |
+                                 v
+                   FastAPI Pods: 2–8 replicas
+                  (managed by API Deployment)
+                                 |
+                                 v
+                    +---------------------------+
+                    |        FastAPI Pod        |
+                    |                           |
+                    |   /work         /client   |
+                    |     |               |     |
+                    | Admission       Admission |
+                    |     |               |     |
+                    | CPU Work     Circuit Breaker
+                    |                     |     |
+                    |                   HTTPX   |
+                    +---------------------|-----+
+                                          |
+                                          v
+                                  Upstream Service
+                                   (internal only)
+                                          |
+                                          v
+                                    Upstream Pod
+
+
+CONTAINER IMAGES
+
+                    Docker Build
+                          |
+                          v
+                   Artifact Registry
+                          |
+                    Image pulled by
+                          |
+                          v
+                GKE API and Upstream Pods
+
+
+OBSERVABILITY
+
+                  API Pods: /metrics
+                          |
+             Scrape targets configured by
+                    PodMonitoring
+                          |
+                          v
+                  Managed Prometheus
+                          |
+                          v
+                   Cloud Monitoring
+              Latency, 429 rate, 429 fraction,
+                  and in-flight requests
+
+
+AUTOSCALING
+
+                   API Pod CPU usage
+                          |
+                    Metrics Server
+                          |
+                    Kubernetes HPA
+                    CPU target: 65%
+                          |
+                Adjusts API Deployment
+                     2–8 replicas
 
 The project separates two reliability experiments:
 
