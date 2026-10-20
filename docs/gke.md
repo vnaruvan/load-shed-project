@@ -86,10 +86,10 @@ Delete the dashboard and dedicated node service account if no longer needed.
 Keep your project if it contains other workloads. Do not describe this as deployed
 until the public health check, image pulls, HPA and dashboard have been verified.
 
-## Verified deployment (October 20, 2026)
+## Verified deployment
 
 - Project: `campusgpt-457123`; regional Autopilot cluster: `load-shed`, `us-central1`.
-- Public health endpoint: http://136.82.66.60/healthz (HTTP demo).
+- Health endpoint used for verification: `http://136.82.66.60/healthz` (historical HTTP demo endpoint; availability is not guaranteed).
 - Artifact Registry image is deployed by digest; see `deployment-evidence.json`.
 - All 10 container tests pass. Both API replicas and the upstream started successfully.
 - Public 250-request burst: 73 successes and 177 HTTP 429 responses, with `Retry-After: 1` verified.
@@ -99,7 +99,8 @@ until the public health check, image pulls, HPA and dashboard have been verified
 - Cloud Monitoring returned nonempty latency and 429-rate data.
 - Dashboard: https://console.cloud.google.com/monitoring/dashboards/builder/23dd7316-bdb5-4312-9758-d46e2e2e3a39?project=campusgpt-457123
 
-Reproduce smoke checks with `python3 scripts/verify-gke.py http://136.82.66.60`.
+Reproduce smoke checks with `python3 scripts/verify-gke.py http://INGRESS_IP`,
+replacing `INGRESS_IP` with the current address returned by `kubectl get ingress`.
 The CPU experiment is bounded to 150 seconds (`python3 scripts/load-gke.py`).
 After load stops, HPA retains higher capacity for its 300-second scale-down window,
 then returns toward two replicas. The endpoint/IP and running resource state can
