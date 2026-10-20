@@ -1,0 +1,72 @@
+{
+  "displayName": "Load-shedding API \u2014 GKE",
+  "gridLayout": {
+    "columns": 2,
+    "widgets": [
+      {
+        "title": "p95 application latency (seconds)",
+        "xyChart": {
+          "dataSets": [
+            {
+              "timeSeriesQuery": {
+                "prometheusQuery": "histogram_quantile(0.95, sum by (le) (rate(load_shed_http_request_duration_seconds_bucket{namespace=\"load-shed\",route=~\"/work|/client\"}[5m])))"
+              },
+              "plotType": "LINE"
+            }
+          ],
+          "yAxis": {
+            "scale": "LINEAR"
+          }
+        }
+      },
+      {
+        "title": "429 responses per second",
+        "xyChart": {
+          "dataSets": [
+            {
+              "timeSeriesQuery": {
+                "prometheusQuery": "sum(rate(load_shed_http_requests_total{namespace=\"load-shed\",status=\"429\"}[5m]))"
+              },
+              "plotType": "LINE"
+            }
+          ],
+          "yAxis": {
+            "scale": "LINEAR"
+          }
+        }
+      },
+      {
+        "title": "429 fraction",
+        "xyChart": {
+          "dataSets": [
+            {
+              "timeSeriesQuery": {
+                "prometheusQuery": "sum(rate(load_shed_http_requests_total{namespace=\"load-shed\",status=\"429\"}[5m])) / clamp_min(sum(rate(load_shed_http_requests_total{namespace=\"load-shed\",route=~\"/work|/client\"}[5m])), 0.001)"
+              },
+              "plotType": "LINE"
+            }
+          ],
+          "yAxis": {
+            "scale": "LINEAR"
+          }
+        }
+      },
+      {
+        "title": "Admitted in-flight requests",
+        "xyChart": {
+          "dataSets": [
+            {
+              "timeSeriesQuery": {
+                "prometheusQuery": "sum(load_shed_admitted_inflight{namespace=\"load-shed\"})"
+              },
+              "plotType": "LINE"
+            }
+          ],
+          "yAxis": {
+            "scale": "LINEAR"
+          }
+        }
+      }
+    ]
+  }
+}

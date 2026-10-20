@@ -398,3 +398,19 @@ This project focuses on a practical reliability principle:
 > **When capacity is constrained, explicitly control which work enters the system instead of allowing overload to determine system behavior.**
 
 Autoscaling adds capacity over time. Admission control protects the service immediately. Circuit breaking prevents unhealthy dependencies from consuming resources repeatedly. Observability makes each decision measurable.
+
+## Google Kubernetes Engine
+
+For Artifact Registry, Cloud Load Balancing, Managed Prometheus and Cloud Monitoring,
+see [the GKE deployment guide](docs/gke.md). Deployment requires a billed Google Cloud
+project; these manifests alone do not establish a running deployment.
+
+## GKE deployment proof
+
+Deployed and verified on GKE Autopilot in `us-central1` on October 20, 2026,
+behind Google Cloud Load Balancing with the container image in Artifact Registry.
+The CPU HPA scaled from 2 to 4 to 8 replicas during the recorded load experiment.
+
+[View original Cloud Console screenshots and test evidence](docs/deployment-proof.md).
+The evidence includes admission rejection with `Retry-After`, dependency timeouts,
+circuit-breaker recovery, and Cloud Monitoring latency and 429-rate queries.
